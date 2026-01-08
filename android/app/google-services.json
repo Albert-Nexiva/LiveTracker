@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "202654829086",
+    "project_id": "livelocationtracker-bcf3d",
+    "storage_bucket": "livelocationtracker-bcf3d.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:202654829086:android:d8b93b3df682e86a55bc0f",
+        "android_client_info": {
+          "package_name": "com.example.live_tracker"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCeUJH7-D9XHhDJttuixwcZnapmp3qDgqM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
