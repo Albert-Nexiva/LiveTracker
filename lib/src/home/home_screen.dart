@@ -122,9 +122,19 @@ class _HomeScreenState extends State<HomeScreen> {
                     Future<void> onLogout() async {
                       if (busy) return;
 
-                      await _logout();
-                      if (!dialogContext.mounted) return;
-                      Navigator.of(dialogContext).pop();
+                      final confirmed = await _confirmSignOut(dialogContext);
+                      if (!confirmed) return;
+
+                      setDialogState(() => busy = true);
+                      try {
+                        await _logout();
+                        if (!dialogContext.mounted) return;
+                        Navigator.of(dialogContext).pop();
+                      } finally {
+                        if (dialogContext.mounted) {
+                          setDialogState(() => busy = false);
+                        }
+                      }
                     }
 
                     return ClipRect(
@@ -271,6 +281,30 @@ class _HomeScreenState extends State<HomeScreen> {
     await AuthService(FirebaseAuth.instance).signOut();
   }
 
+  Future<bool> _confirmSignOut(BuildContext dialogContext) async {
+    final result = await showDialog<bool>(
+      context: dialogContext,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('Sign out?'),
+          content: const Text('Are you sure you want to sign out?'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('Sign out'),
+            ),
+          ],
+        );
+      },
+    );
+
+    return result ?? false;
+  }
+
   Future<_PermissionStatus> _ensureLocationPermission() async {
     if (kIsWeb) {
       return const _PermissionStatus(
@@ -314,16 +348,34 @@ class _HomeScreenState extends State<HomeScreen> {
     return const _PermissionStatus(ok: true);
   }
 
-  List<fm.Marker> _markers() {
+  List<fm.Marker> _markers(BuildContext context) {
     final pos = _position;
     if (pos == null) return const [];
+
+    final labelStyle = Theme.of(context).textTheme.labelSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+        );
 
     return [
       fm.Marker(
         point: LatLng(pos.latitude, pos.longitude),
-        width: 48,
-        height: 48,
-        child: const Icon(Icons.location_pin, size: 42),
+        width: 64,
+        height: 72,
+        alignment: Alignment.topCenter,
+        child: Material(
+          type: MaterialType.transparency,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text('YOU', style: labelStyle),
+              const Icon(
+                Icons.location_pin,
+                size: 42,
+                color: Colors.red,
+              ),
+            ],
+          ),
+        ),
       ),
     ];
   }
@@ -340,7 +392,9 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             tooltip: 'Sign out',
             onPressed: () async {
-           _logout();
+              final confirmed = await _confirmSignOut(context);
+              if (!confirmed) return;
+              await _logout();
             },
             icon: const Icon(Icons.logout),
           ),
@@ -420,7 +474,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                     userAgentPackageName: 'com.example.live_tracker',
                   ),
-                  fm.MarkerLayer(markers: _markers()),
+                  fm.MarkerLayer(markers: _markers(context)),
                 ],
               ),
             ),
