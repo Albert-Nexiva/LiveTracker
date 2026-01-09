@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io' show Platform;
+import 'dart:ui' show ImageFilter;
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter_map/flutter_map.dart' as fm;
@@ -29,16 +30,178 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _locationError;
   bool _requesting = false;
 
+  bool _permissionDialogOpen = false;
+
   @override
   void initState() {
     super.initState();
-    _startLocationTracking();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _primeLocationGate();
+    });
   }
 
   @override
   void dispose() {
     _positionSub?.cancel();
     super.dispose();
+  }
+
+  Future<void> _primeLocationGate() async {
+    final shouldShow = await _shouldShowLocationDialog();
+    if (!mounted) return;
+
+    if (!shouldShow) {
+      await _startLocationTracking();
+      return;
+    }
+
+    await _showLocationAccessDialog();
+  }
+
+  Future<void> _showLocationAccessDialog() async {
+    if (!mounted) return;
+    if (_permissionDialogOpen) return;
+
+    _permissionDialogOpen = true;
+    try {
+      await showGeneralDialog<void>(
+        context: context,
+        barrierDismissible: false,
+        barrierLabel: 'Location permission required',
+        pageBuilder: (routeContext, animation, secondaryAnimation) {
+          var busy = false;
+
+          return PopScope(
+            canPop: false,
+            child: SafeArea(
+              child: Center(
+                child: StatefulBuilder(
+                  builder: (dialogContext, setDialogState) {
+                    Future<void> onAllow() async {
+                      if (busy) return;
+                      setDialogState(() => busy = true);
+
+                      try {
+                        if (kIsWeb) return;
+
+                        final enabled =
+                            await Geolocator.isLocationServiceEnabled();
+                        if (!enabled) {
+                          await Geolocator.openLocationSettings();
+                        }
+
+                        final permission = Platform.isIOS
+                            ? Permission.locationWhenInUse
+                            : Permission.location;
+
+                        var status = await permission.status;
+                        if (status.isDenied ||
+                            status.isRestricted ||
+                            status.isLimited) {
+                          status = await permission.request();
+                        }
+
+                        if (status.isPermanentlyDenied) {
+                          await Geolocator.openAppSettings();
+                        }
+
+                        final shouldShow =
+                            await _shouldShowLocationDialog();
+                        if (!shouldShow) {
+                          if (!dialogContext.mounted) return;
+                          Navigator.of(dialogContext).pop();
+                          await _startLocationTracking();
+                        }
+                      } finally {
+                        if (dialogContext.mounted) {
+                          setDialogState(() => busy = false);
+                        }
+                      }
+                    }
+
+                    Future<void> onLogout() async {
+                      if (busy) return;
+
+                      await _logout();
+                      if (!dialogContext.mounted) return;
+                      Navigator.of(dialogContext).pop();
+                    }
+
+                    return ClipRect(
+                      child: BackdropFilter(
+                        filter: ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                        child: Dialog(
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Padding(
+                            padding: const EdgeInsets.all(18),
+                            child: ConstrainedBox(
+                              constraints: const BoxConstraints(maxWidth: 420),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  Text(
+                                    'Please allow Location access to get access to app functions.',
+                                    style: Theme.of(dialogContext)
+                                        .textTheme
+                                        .titleMedium,
+                                    textAlign: TextAlign.center,
+                                  ),
+                                  const SizedBox(height: 16),
+                                  FilledButton(
+                                    onPressed: busy ? null : onAllow,
+                                    child: busy
+                                        ? const SizedBox(
+                                            height: 18,
+                                            width: 18,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                            ),
+                                          )
+                                        : const Text('Allow location access'),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  OutlinedButton.icon(
+                                    onPressed: busy ? null : onLogout,
+                                    icon: const Icon(Icons.logout),
+                                    label: const Text('Logout'),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          );
+        },
+        transitionBuilder: (context, animation, secondaryAnimation, child) {
+          return FadeTransition(opacity: animation, child: child);
+        },
+      );
+    } finally {
+      _permissionDialogOpen = false;
+    }
+  }
+
+  Future<bool> _shouldShowLocationDialog() async {
+    if (kIsWeb) return false;
+
+    final enabled = await Geolocator.isLocationServiceEnabled();
+    if (!enabled) return true;
+
+    final permission = Platform.isIOS
+        ? Permission.locationWhenInUse
+        : Permission.location;
+
+    final status = await permission.status;
+    return !status.isGranted;
   }
 
   Future<void> _startLocationTracking() async {
@@ -54,6 +217,8 @@ class _HomeScreenState extends State<HomeScreen> {
           _locationError = status.message;
           _requesting = false;
         });
+
+        await _showLocationAccessDialog();
         return;
       }
 
@@ -100,6 +265,10 @@ class _HomeScreenState extends State<HomeScreen> {
         });
       }
     }
+  }
+
+  Future<void> _logout() async {
+    await AuthService(FirebaseAuth.instance).signOut();
   }
 
   Future<_PermissionStatus> _ensureLocationPermission() async {
@@ -167,11 +336,11 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Live Tracker'),
-        actions: [
+         actions: [
           IconButton(
             tooltip: 'Sign out',
             onPressed: () async {
-              await AuthService(FirebaseAuth.instance).signOut();
+           _logout();
             },
             icon: const Icon(Icons.logout),
           ),
@@ -194,7 +363,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                   const SizedBox(width: 12),
                   FilledButton.icon(
-                    onPressed: _requesting ? null : _startLocationTracking,
+                    onPressed: _requesting ? null : _primeLocationGate,
                     icon: const Icon(Icons.my_location),
                     label: const Text('Refresh'),
                   ),
@@ -247,7 +416,8 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 children: [
                   fm.TileLayer(
-                    urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                    urlTemplate:
+                        'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                     userAgentPackageName: 'com.example.live_tracker',
                   ),
                   fm.MarkerLayer(markers: _markers()),
@@ -284,10 +454,20 @@ class _LocationInfo extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('Latitude:  ${p.latitude.toStringAsFixed(6)}'),
-        Text('Longitude: ${p.longitude.toStringAsFixed(6)}'),
-        Text('Accuracy:  ${p.accuracy.toStringAsFixed(1)} m'),
-        Text('Updated:   $time'),
+     Row (
+      
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [ Text('Latitude:  ${p.latitude.toStringAsFixed(6)}'),
+        Text('Longitude: ${p.longitude.toStringAsFixed(6)}'),]),
+
+        Row(   mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Accuracy:  ${p.accuracy.toStringAsFixed(1)} m'),
+            Text('Updated:   $time'),
+          ],
+        ),
       ],
     );
   }
